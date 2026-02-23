@@ -1,0 +1,23 @@
+# Arquivos compilados e executáveis
+*.exe
+*.dll
+*.bpl
+*.bpi
+*.dcp
+*.so
+*.apk
+*.rsm
+
+# Arquivos temporários e de cache do Delphi
+*.dcu
+*.~*
+*.local
+*.identcache
+*.tvsconfig
+*.stat
+*.dres
+
+# Diretórios de backup e histórico gerados pela IDE
+__history/
+__recovery/
+ModelSupport/
