@@ -39,7 +39,6 @@ type
     property IdPessoa: Int64 read FIdPessoa write FIdPessoa;
     property DsCep: string read FDsCep write FDsCep;
 
-    // O Endereço "tem uma" Integração (Composição)
     property Integracao: TEnderecoIntegracao read FIntegracao write FIntegracao;
   end;
 
@@ -49,15 +48,14 @@ implementation
 
 constructor TEndereco.Create;
 begin
-  // Quando criar um Endereço, cria a Integração junto
+  inherited Create;
   FIntegracao := TEnderecoIntegracao.Create;
 end;
 
 destructor TEndereco.Destroy;
 begin
-  // Quando destruir o Endereço, destrói a Integração da memória para não dar vazamento (Memory Leak)
   FIntegracao.Free;
-  inherited;
+  inherited Destroy;
 end;
 
 end.

@@ -15,6 +15,8 @@ type
     destructor Destroy; override;
 
     function Insert(AEndereco: TEndereco): Boolean;
+    function Update(AEndereco: TEndereco): Boolean;
+    function Delete(AIdEndereco: Int64): Boolean;
     procedure ProcessarIntegracoesPendentes;
   end;
 
@@ -39,10 +41,12 @@ var
   vlsThreadCep: string;
   vliThreadIdEndereco: Int64;
 begin
-  vltQry := TFDQuery.Create(nil);
+  vltQry := nil;
   try
+    vltQry := TFDQuery.Create(nil);
     vltQry.Connection := FConexao.FDConnection1;
-    //insere na tabela de endereço
+
+    // insere na tabela de endereço
     vltQry.SQL.Add('INSERT INTO endereco (idpessoa, dscep)');
     vltQry.SQL.Add('VALUES (:pessoa, :cep) RETURNING idendereco');
 
@@ -53,11 +57,10 @@ begin
     // pega o id
     AEndereco.IdEndereco := vltQry.FieldByName('idendereco').AsLargeInt;
 
-    // prepara para chamar o thread
     vlsThreadCep := AEndereco.DsCep;
     vliThreadIdEndereco := AEndereco.IdEndereco;
 
-    // inicia o thread
+    // inicia a thread
     TThread.CreateAnonymousThread(
       procedure
       var
@@ -65,14 +68,13 @@ begin
         vltResponse: IHTTPResponse;
         vltJsonObj: TJSONObject;
         vltQryIntegracao: TFDQuery;
-        vltConexaoThread: TdmConexao; // cria uma nova conexão apenas para o thread
+        vltConexaoThread: TdmConexao;
       begin
         vltHttp := THTTPClient.Create;
         vltConexaoThread := TdmConexao.Create(nil);
         vltQryIntegracao := TFDQuery.Create(nil);
         try
           try
-            // Busca no ViaCEP
             vltResponse := vltHttp.Get('https://viacep.com.br/ws/' + vlsThreadCep + '/json/');
 
             if vltResponse.StatusCode = 200 then
@@ -80,7 +82,6 @@ begin
               vltJsonObj := TJSONObject.ParseJSONValue(vltResponse.ContentAsString()) as TJSONObject;
               if Assigned(vltJsonObj) then
               try
-                // Se o ViaCEP não retornou "erro": true
                 if vltJsonObj.GetValue('erro') = nil then
                 begin
                   vltQryIntegracao.Connection := vltConexaoThread.FDConnection1;
@@ -93,7 +94,6 @@ begin
                   vltQryIntegracao.ParamByName('bairro').AsString := vltJsonObj.GetValue('bairro').Value;
                   vltQryIntegracao.ParamByName('logradouro').AsString := vltJsonObj.GetValue('logradouro').Value;
 
-                  // Complemento pode vir vazio do ViaCEP
                   if vltJsonObj.GetValue('complemento') <> nil then
                     vltQryIntegracao.ParamByName('complemento').AsString := vltJsonObj.GetValue('complemento').Value
                   else
@@ -106,7 +106,6 @@ begin
               end;
             end;
           except
-            // except vazio para estourar erro ao usuario caso a conexão caia ou algum outro erro
           end;
         finally
           vltQryIntegracao.Free;
@@ -114,48 +113,97 @@ begin
           vltHttp.Free;
         end;
       end
-    ).Start; // start do thread
+    ).Start;
 
-    Result := True; // retorna true sem esperar o thread acabar
+    Result := True;
+  finally
+    vltQry.Free;
+  end;
+end;
+
+function TEnderecoDAO.Update(AEndereco: TEndereco): Boolean;
+var
+  vltQry: TFDQuery;
+begin
+  vltQry := nil;
+  try
+    vltQry := TFDQuery.Create(nil);
+    vltQry.Connection := FConexao.FDConnection1;
+
+    vltQry.SQL.Add('UPDATE endereco SET dscep = :cep WHERE idpessoa = :pessoa RETURNING idendereco');
+    vltQry.ParamByName('cep').AsString := AEndereco.DsCep;
+    vltQry.ParamByName('pessoa').AsLargeInt := AEndereco.IdPessoa;
+    vltQry.Open;
+
+    if not vltQry.IsEmpty then
+    begin
+      AEndereco.IdEndereco := vltQry.FieldByName('idendereco').AsLargeInt;
+
+      vltQry.Close;
+      vltQry.SQL.Clear;
+      vltQry.SQL.Add('DELETE FROM endereco_integracao WHERE idendereco = :id');
+      vltQry.ParamByName('id').AsLargeInt := AEndereco.IdEndereco;
+      vltQry.ExecSQL;
+    end;
+
+    Result := True;
+  finally
+    vltQry.Free;
+  end;
+end;
+
+function TEnderecoDAO.Delete(AIdEndereco: Int64): Boolean;
+var
+  vltQry: TFDQuery;
+begin
+  vltQry := nil;
+  try
+    vltQry := TFDQuery.Create(nil);
+    vltQry.Connection := FConexao.FDConnection1;
+    vltQry.SQL.Add('DELETE FROM endereco WHERE idendereco = :id');
+    vltQry.ParamByName('id').AsLargeInt := AIdEndereco;
+    vltQry.ExecSQL;
+    Result := True;
   finally
     vltQry.Free;
   end;
 end;
 
 procedure TEnderecoDAO.ProcessarIntegracoesPendentes;
-var
-  vltQryBusca: TFDQuery;
 begin
-  vltQryBusca := TFDQuery.Create(nil);
-  try
-    vltQryBusca.Connection := FConexao.FDConnection1;
-    // Busca todos os endereços que AINDA NÃO estão na tabela endereco_integracao
-    vltQryBusca.SQL.Add('SELECT e.idendereco, e.dscep FROM endereco e');
-    vltQryBusca.SQL.Add('LEFT JOIN endereco_integracao ei ON e.idendereco = ei.idendereco');
-    vltQryBusca.SQL.Add('WHERE ei.idendereco IS NULL');
-    vltQryBusca.Open;
-
-    // Para cada registro encontrado, dispara uma Thread de integração
-    while not vltQryBusca.Eof do
+  // cria uma thread que ficara rodando no bakcground
+  TThread.CreateAnonymousThread(
+    procedure
+    var
+      vltHttp: THTTPClient;
+      vltResponse: IHTTPResponse;
+      vltJsonObj: TJSONObject;
+      vltQryBusca, vltQryInt: TFDQuery;
+      vltConThread: TdmConexao;
+      vliThreadIdEndereco: Int64;
+      vlsThreadCep: string;
     begin
-      var ThreadIdEndereco := vltQryBusca.FieldByName('idendereco').AsLargeInt;
-      var ThreadCep := vltQryBusca.FieldByName('dscep').AsString;
+      vltHttp := THTTPClient.Create;
+      vltConThread := TdmConexao.Create(nil);
+      vltQryBusca := TFDQuery.Create(nil);
+      vltQryInt := TFDQuery.Create(nil);
+      try
+        try
+          vltQryBusca.Connection := vltConThread.FDConnection1;
+          vltQryInt.Connection := vltConThread.FDConnection1;
 
-      TThread.CreateAnonymousThread(
-        procedure
-        var
-          vltHttp: THTTPClient;
-          vltResponse: IHTTPResponse;
-          vltJsonObj: TJSONObject;
-          vltQryInt: TFDQuery;
-          vltConThread: TdmConexao;  // cria uma nova conexão apenas para o thread
-        begin
-          vltHttp := THTTPClient.Create;
-          vltConThread := TdmConexao.Create(nil);
-          vltQryInt := TFDQuery.Create(nil);
-          try
+          vltQryBusca.SQL.Add('SELECT e.idendereco, e.dscep FROM endereco e');
+          vltQryBusca.SQL.Add('LEFT JOIN endereco_integracao ei ON e.idendereco = ei.idendereco');
+          vltQryBusca.SQL.Add('WHERE ei.idendereco IS NULL');
+          vltQryBusca.Open;
+
+          while not vltQryBusca.Eof do
+          begin
+            vliThreadIdEndereco := vltQryBusca.FieldByName('idendereco').AsLargeInt;
+            vlsThreadCep := vltQryBusca.FieldByName('dscep').AsString;
+
             try
-              vltResponse := vltHttp.Get('https://viacep.com.br/ws/' + ThreadCep + '/json/');
+              vltResponse := vltHttp.Get('https://viacep.com.br/ws/' + vlsThreadCep + '/json/');
               if vltResponse.StatusCode = 200 then
               begin
                 vltJsonObj := TJSONObject.ParseJSONValue(vltResponse.ContentAsString()) as TJSONObject;
@@ -163,11 +211,12 @@ begin
                 try
                   if vltJsonObj.GetValue('erro') = nil then
                   begin
-                    vltQryInt.Connection := vltConThread.FDConnection1;
+                    vltQryInt.Close;
+                    vltQryInt.SQL.Clear;
                     vltQryInt.SQL.Add('INSERT INTO endereco_integracao (idendereco, dsuf, nmcidade, nmbairro, nmlogradouro, dscomplemento)');
                     vltQryInt.SQL.Add('VALUES (:id, :uf, :cidade, :bairro, :logradouro, :complemento)');
 
-                    vltQryInt.ParamByName('id').AsLargeInt := ThreadIdEndereco;
+                    vltQryInt.ParamByName('id').AsLargeInt := vliThreadIdEndereco;
                     vltQryInt.ParamByName('uf').AsString := vltJsonObj.GetValue('uf').Value;
                     vltQryInt.ParamByName('cidade').AsString := vltJsonObj.GetValue('localidade').Value;
                     vltQryInt.ParamByName('bairro').AsString := vltJsonObj.GetValue('bairro').Value;
@@ -185,21 +234,24 @@ begin
                 end;
               end;
             except
-              // except vazio para a thread não travar o loop
+              // except vazio para o loop não parar
             end;
-          finally
-            vltQryInt.Free;
-            vltConThread.Free;
-            vltHttp.Free;
-          end;
-        end
-      ).Start; // Inicia a Thread para este CEP específico
 
-      vltQryBusca.Next;
-    end;
-  finally
-    vltQryBusca.Free;
-  end;
+            // sleep para garantir que o viacep nao ira bloquear em requisiçoes com muitos cadastros.
+            Sleep(100);
+
+            vltQryBusca.Next;
+          end;
+        except
+        end;
+      finally
+        vltQryInt.Free;
+        vltQryBusca.Free;
+        vltConThread.Free;
+        vltHttp.Free;
+      end;
+    end
+  ).Start;
 end;
 
 end.

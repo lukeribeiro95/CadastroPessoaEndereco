@@ -10,107 +10,203 @@ procedure Registry;
 
 implementation
 
-// insert de pessoa (POST /pessoas)
-procedure DoInsert(vptReq: THorseRequest; vptRes: THorseResponse; Next: TProc);
+// --- insert de pessoa (POST /pessoas) ---
+procedure DoInsert(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc);
 var
   vltPessoa: TPessoa;
   vltDAO: TPessoaDAO;
 begin
-  // converte o objeto
-  vltPessoa := TJson.JsonToObject<TPessoa>(vptReq.Body);
-  vltDAO := TPessoaDAO.Create;
+  vltPessoa := nil;
+  vltDAO := nil;
+
   try
+    try
+      // Tenta converter o objeto
+      vltPessoa := TJson.JsonToObject<TPessoa>(AReq.Body);
+    except
+      ARes.Status(400).Send('JSON inválido ou mal formatado.');
+      Exit;
+    end;
+
+    if not Assigned(vltPessoa) then
+    begin
+      ARes.Status(400).Send('O corpo da requisição não pode ser vazio.');
+      Exit;
+    end;
+
+    vltDAO := TPessoaDAO.Create;
+
     if vltDAO.Insert(vltPessoa) then
-      vptRes.Status(201).Send(TJson.ObjectToJsonString(vltPessoa))
+      ARes.Status(201).Send(TJson.ObjectToJsonString(vltPessoa))
     else
-      vptRes.Status(500).Send('Erro ao inserir pessoa no banco.');
+      ARes.Status(500).Send('Erro interno ao inserir pessoa no banco.');
+
   finally
     vltPessoa.Free;
     vltDAO.Free;
   end;
 end;
 
-// update de pessoa (PUT /pessoas/:id) ---
-procedure DoUpdate(vptReq: THorseRequest; vptRes: THorseResponse; vptNext: TProc);
+// --- update de pessoa (PUT /pessoas/:id) ---
+procedure DoUpdate(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc);
 var
   vltPessoa: TPessoa;
   vltDAO: TPessoaDAO;
 begin
-  vltPessoa := TJson.JsonToObject<TPessoa>(vptReq.Body);
-  vltDAO := TPessoaDAO.Create;
-  try
-    // Pega o ID que foi passado na URL (ex: /pessoas/5)
-    vltPessoa.IdPessoa := vptReq.Params['id'].ToInt64;
+  vltPessoa := nil;
+  vltDAO := nil;
 
+  try
+    try
+      vltPessoa := TJson.JsonToObject<TPessoa>(AReq.Body);
+    except
+      ARes.Status(400).Send('JSON inválido ou mal formatado.');
+      Exit;
+    end;
+
+    if not Assigned(vltPessoa) then
+    begin
+      ARes.Status(400).Send('O corpo da requisição não pode ser vazio.');
+      Exit;
+    end;
+
+    try
+      // confirma apenas numeros no id
+      vltPessoa.IdPessoa := AReq.Params['id'].ToInt64;
+    except
+      ARes.Status(400).Send('ID da pessoa inválido na URL.');
+      Exit;
+    end;
+
+    vltDAO := TPessoaDAO.Create;
     if vltDAO.Update(vltPessoa) then
-      vptRes.Status(200).Send('Pessoa atualizada com sucesso.')
+      ARes.Status(200).Send('Pessoa atualizada com sucesso.')
     else
-      vptRes.Status(500).Send('Erro ao atualizar pessoa.');
+      ARes.Status(500).Send('Erro interno ao atualizar pessoa.');
+
   finally
     vltPessoa.Free;
     vltDAO.Free;
   end;
 end;
 
-// delete de pessoa (DELETE /pessoas/:id) ---
-procedure DoDelete(vptReq: THorseRequest; vptRes: THorseResponse; vptNext: TProc);
+// --- delete de pessoa (DELETE /pessoas/:id) ---
+procedure DoDelete(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc);
 var
   vltDAO: TPessoaDAO;
   vliIdUrl: Int64;
 begin
-  vltDAO := TPessoaDAO.Create;
+  vltDAO := nil;
   try
-    vliIdUrl := vptReq.Params['id'].ToInt64;
-
-    if vltDAO.Delete(vliIdUrl) then
-      vptRes.Status(204).Send('') // 204 No Content (padrão REST para Delete)
-    else
-      vptRes.Status(500).Send('Erro ao deletar pessoa.');
-  finally
-    vltDAO.Free;
-  end;
-end;
-
-// insert em lote (POST /pessoas/lote) ---
-procedure DoInsertLote(Req: THorseRequest; Res: THorseResponse; Next: TProc);
-var
-  vltListaPessoas: TObjectList<TPessoa>;
-  vltJsonArray: TJSONArray;
-  vliI: Integer;
-  vltPessoa: TPessoa;
-  vltDAO: TPessoaDAO;
-begin
-  // recebe um array de json e converte em objectList
-  vltJsonArray := TJSONObject.ParseJSONValue(Req.Body) as TJSONArray;
-  if not Assigned(vltJsonArray) then
-  begin
-    Res.Status(400).Send('JSON Inválido. Esperava-se um Array de objetos.');
-    Exit;
-  end;
-
-  vltListaPessoas := TObjectList<TPessoa>.Create;
-  vltDAO := TPessoaDAO.Create;
-  try
-    // percorre o json populando a lista
-    for vliI := 0 to vltJsonArray.Count - 1 do
-    begin
-      vltPessoa := TJson.JsonToObject<TPessoa>(vltJsonArray.Items[vliI].ToJSON);
-      vltListaPessoas.Add(vltPessoa);
+    try
+      // confirma apenas numeros no id
+      vliIdUrl := AReq.Params['id'].ToInt64;
+    except
+      ARes.Status(400).Send('ID da pessoa inválido na URL.');
+      Exit;
     end;
 
-    // Manda a lista inteira
-    if vltDAO.InsertLote(vltListaPessoas) then
-      Res.Status(201).Send('Lote de ' + vltListaPessoas.Count.ToString + ' pessoas inserido com sucesso!')
+    vltDAO := TPessoaDAO.Create;
+    if vltDAO.Delete(vliIdUrl) then
+      ARes.Status(204).Send('')
     else
-      Res.Status(500).Send('Erro ao inserir lote.');
+      ARes.Status(500).Send('Erro interno ao deletar pessoa.');
+
   finally
-    vltListaPessoas.Free;
     vltDAO.Free;
-    vltJsonArray.Free;
   end;
 end;
 
-// registro das rotas
+// --- insert em lote (POST /pessoas/lote) ---
+procedure DoInsertLote(AReq: THorseRequest; ARes: THorseResponse; ANext: TProc);
+var
+  vltDAO: TPessoaDAO;
+  vltListaPessoas: TObjectList<TPessoa>;
+  vliQtdInserida: Integer;
+  vltJsonArray: TJSONArray;
+  vltJsonVal: TJSONValue;
+  vltJsonRes: TJSONObject;
+  vltJsonRetorno: TJSONObject;
+  vlsTextoJson: string;
+  vliI: Integer;
+begin
+  vltListaPessoas := nil;
+  vltDAO := nil;
+  vltJsonVal := nil;
+
+  try
+    try
+
+      vltJsonVal := TJSONObject.ParseJSONValue(AReq.Body);
+
+      if (not Assigned(vltJsonVal)) or (not (vltJsonVal is TJSONArray)) then
+      begin
+        ARes.Status(400).Send(TJSONObject.Create.AddPair('erro', 'Esperava-se um Array JSON no corpo da requisição.'));
+        Exit;
+      end;
+
+      vltJsonArray := vltJsonVal as TJSONArray;
+      vltListaPessoas := TObjectList<TPessoa>.Create;
+
+
+      for vliI := 0 to vltJsonArray.Count - 1 do
+      begin
+        // Converte cada item do array para o objeto
+        vltListaPessoas.Add(TJson.JsonToObject<TPessoa>(vltJsonArray.Items[vliI].ToJSON));
+      end;
+
+    except
+      on E: Exception do
+      begin
+        ARes.Status(400).Send(TJSONObject.Create.AddPair('erro', 'Falha na conversão do JSON: ' + E.Message));
+        Exit;
+      end;
+    end;
+
+    vltDAO := TPessoaDAO.Create;
+    vliQtdInserida := vltDAO.InsertLote(vltListaPessoas);
+
+    vltJsonRetorno := TJSONObject.Create;
+    try
+      if vliQtdInserida > 0 then
+      begin
+        vltJsonRetorno.AddPair('mensagem', Format('Processamento concluído. %d pessoas foram inseridas com sucesso.', [vliQtdInserida]));
+        vlsTextoJson := vltJsonRetorno.ToJSON;
+
+        ARes.ContentType('application/json')
+            .Status(201)
+            .Send(vlsTextoJson);
+      end
+      else if vliQtdInserida = 0 then
+      begin
+        vltJsonRetorno.AddPair('erro', 'Nenhum registro foi inserido. Certifique-se de que os objetos possuem o campo "dscep".');
+        vlsTextoJson := vltJsonRetorno.ToJSON;
+
+        ARes.ContentType('application/json')
+            .Status(400)
+            .Send(vlsTextoJson);
+      end
+      else
+      begin
+        vltJsonRetorno.AddPair('erro', 'Falha interna ao processar lote no banco de dados.');
+        vlsTextoJson := vltJsonRetorno.ToJSON;
+
+        ARes.ContentType('application/json')
+            .Status(500)
+            .Send(vlsTextoJson);
+      end;
+    finally
+      vltJsonRetorno.Free;
+    end;
+
+  finally
+    vltDAO.Free;
+    vltListaPessoas.Free;
+    if Assigned(vltJsonVal) then vltJsonVal.Free;
+  end;
+end;
+
+// --- registro das rotas ---
 procedure Registry;
 begin
   THorse.Post('/pessoas', DoInsert);

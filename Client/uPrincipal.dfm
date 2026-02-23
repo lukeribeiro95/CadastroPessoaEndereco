@@ -113,22 +113,13 @@ object Form10: TForm10
     TabOrder = 6
     OnClick = btnSalvarPessoaClick
   end
-  object btnInserirLote: TButton
-    Left = 474
-    Top = 63
-    Width = 113
-    Height = 25
-    Caption = 'Inserir Lote(50.000)'
-    TabOrder = 7
-    OnClick = btnInserirLoteClick
-  end
   object btnSincronizar: TButton
     Left = 474
-    Top = 94
+    Top = 63
     Width = 129
     Height = 25
     Caption = 'Sincronizar CEPs(Thread)'
-    TabOrder = 8
+    TabOrder = 7
     OnClick = btnSincronizarClick
   end
   object mmoServidor: TMemo
@@ -137,6 +128,6 @@ object Form10: TForm10
     Width = 609
     Height = 184
     ReadOnly = True
-    TabOrder = 9
+    TabOrder = 8
   end
 end

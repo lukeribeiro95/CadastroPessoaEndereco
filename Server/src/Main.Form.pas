@@ -2,8 +2,9 @@ unit Main.Form;
 
 interface
 
-uses Winapi.Windows, System.Variants, System.Classes, Vcl.Graphics, Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls,
-  Vcl.Buttons, System.SysUtils;
+uses
+  Winapi.Windows, System.Variants, System.Classes, Vcl.Graphics,
+  Vcl.Controls, Vcl.Forms, Vcl.Dialogs, Vcl.StdCtrls, Vcl.Buttons, System.SysUtils;
 
 type
   TFrmVCL = class(TForm)
@@ -28,15 +29,17 @@ implementation
 
 uses
   Horse,
-  System.JSON,
-  System.StrUtils,
-  Rest.JSON,
-  uPessoa,
-  uEndereco,
   uPessoaController,
   uEnderecoController;
 
 {$R *.dfm}
+
+procedure TFrmVCL.FormCreate(Sender: TObject);
+begin
+  uPessoaController.Registry;
+  uEnderecoController.Registry;
+  Status;
+end;
 
 procedure TFrmVCL.FormClose(Sender: TObject; var Action: TCloseAction);
 begin
@@ -44,17 +47,23 @@ begin
     Stop;
 end;
 
-procedure TFrmVCL.FormCreate(Sender: TObject);
-begin
-  // Removemos os exemplos e registramos o nosso Controller
-  uPessoaController.Registry; // <--- Isso ativa todas as rotas (Insert, Update, Delete, Lote)
-  uEnderecoController.Registry;
-end;
-
 procedure TFrmVCL.Start;
 begin
-  // No Delphi 12 Community, certifique-se que a porta padrão (geralmente 9000 ou 8080) está livre
-  THorse.Listen(StrToIntDef(edtPort.Text, 9000));
+  try
+    THorse.Listen(StrToIntDef(edtPort.Text, 8080));
+  except
+    on vltE: Exception do
+    begin
+      ShowMessage('Não foi possível iniciar o servidor na porta ' + edtPort.Text + '.' + sLineBreak +
+                  'Detalhe do erro: ' + vltE.Message);
+    end;
+  end;
+end;
+
+procedure TFrmVCL.Stop;
+begin
+  if THorse.IsRunning then
+    THorse.StopListen;
 end;
 
 procedure TFrmVCL.Status;
@@ -62,11 +71,6 @@ begin
   btnStop.Enabled := THorse.IsRunning;
   btnStart.Enabled := not THorse.IsRunning;
   edtPort.Enabled := not THorse.IsRunning;
-end;
-
-procedure TFrmVCL.Stop;
-begin
-  THorse.StopListen;
 end;
 
 procedure TFrmVCL.btnStartClick(Sender: TObject);

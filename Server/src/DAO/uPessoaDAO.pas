@@ -18,9 +18,7 @@ type
     function Insert(APessoa: TPessoa): Boolean;
     function Update(APessoa: TPessoa): Boolean;
     function Delete(AIdPessoa: Int64): Boolean;
-
-    // O método Sênior para inserir 50 mil registros em milissegundos
-    function InsertLote(ALista: TObjectList<TPessoa>): Boolean;
+    function InsertLote(ALista: TObjectList<TPessoa>): Integer;
   end;
 
 implementation
@@ -29,200 +27,282 @@ implementation
 
 constructor TPessoaDAO.Create;
 begin
-  // Instancia a nossa conexão com o banco de dados
+  // Instancia o banco de dados
   FConexao := TdmConexao.Create(nil);
 end;
 
 destructor TPessoaDAO.Destroy;
 begin
-  // Evita vazamento de memória destruindo a conexão adequadamente
   FConexao.Free;
   inherited;
 end;
 
 function TPessoaDAO.Insert(APessoa: TPessoa): Boolean;
 var
-  Qry: TFDQuery;
-  ThreadCep: string;
-  ThreadIdEndereco: Int64;
+  vltQry: TFDQuery;
+  vlsThreadCep: string;
+  vliThreadIdEndereco: Int64;
 begin
   Result := False;
-  // Regra de Integridade: Se não mandou CEP, nem tenta salvar!
+  // sem cep nao salva
   if APessoa.DsCep.Trim = '' then Exit;
 
-  Qry := TFDQuery.Create(nil);
+  vltQry := nil;
 
-  // INICIA A TRANSAÇÃO (Garante a integridade - Tudo ou Nada)
+  // INICIA A TRANSAÇÃO
   FConexao.FDConnection1.StartTransaction;
   try
-    Qry.Connection := FConexao.FDConnection1;
+    vltQry := TFDQuery.Create(nil);
+    try
+      vltQry.Connection := FConexao.FDConnection1;
 
-    // 1. Insere a Pessoa
-    Qry.SQL.Add('INSERT INTO pessoa (flnatureza, dsdocumento, nmprimeiro, nmsegundo, dtregistro)');
-    Qry.SQL.Add('VALUES (:natureza, :documento, :primeiro, :segundo, :registro)');
-    Qry.SQL.Add('RETURNING idpessoa');
+      //Insere a Pessoa
+      vltQry.SQL.Add('INSERT INTO pessoa (flnatureza, dsdocumento, nmprimeiro, nmsegundo, dtregistro)');
+      vltQry.SQL.Add('VALUES (:natureza, :documento, :primeiro, :segundo, :registro)');
+      vltQry.SQL.Add('RETURNING idpessoa');
 
-    Qry.ParamByName('natureza').AsInteger := APessoa.FlNatureza;
-    Qry.ParamByName('documento').AsString := APessoa.DsDocumento;
-    Qry.ParamByName('primeiro').AsString := APessoa.NmPrimeiro;
-    Qry.ParamByName('segundo').AsString := APessoa.NmSegundo;
-    Qry.ParamByName('registro').AsDate := APessoa.DtRegistro;
-    Qry.Open;
+      vltQry.ParamByName('natureza').AsInteger := APessoa.FlNatureza;
+      vltQry.ParamByName('documento').AsString := APessoa.DsDocumento;
+      vltQry.ParamByName('primeiro').AsString := APessoa.NmPrimeiro;
+      vltQry.ParamByName('segundo').AsString := APessoa.NmSegundo;
+      vltQry.ParamByName('registro').AsDate := APessoa.DtRegistro;
+      vltQry.Open;
 
-    APessoa.IdPessoa := Qry.FieldByName('idpessoa').AsLargeInt;
+      APessoa.IdPessoa := vltQry.FieldByName('idpessoa').AsLargeInt;
 
-    // 2. Insere o Endereço vinculado àquela Pessoa na mesma transação!
-    Qry.Close;
-    Qry.SQL.Clear;
-    Qry.SQL.Add('INSERT INTO endereco (idpessoa, dscep) VALUES (:pessoa, :cep) RETURNING idendereco');
-    Qry.ParamByName('pessoa').AsLargeInt := APessoa.IdPessoa;
-    Qry.ParamByName('cep').AsString := APessoa.DsCep;
-    Qry.Open;
+      // Insere o Endereço vinculado a mesma pessoa
+      vltQry.Close;
+      vltQry.SQL.Clear;
+      vltQry.SQL.Add('INSERT INTO endereco (idpessoa, dscep) VALUES (:pessoa, :cep) RETURNING idendereco');
+      vltQry.ParamByName('pessoa').AsLargeInt := APessoa.IdPessoa;
+      vltQry.ParamByName('cep').AsString := APessoa.DsCep;
+      vltQry.Open;
 
-    ThreadIdEndereco := Qry.FieldByName('idendereco').AsLargeInt;
-    ThreadCep := APessoa.DsCep;
+      vliThreadIdEndereco := vltQry.FieldByName('idendereco').AsLargeInt;
+      vlsThreadCep := APessoa.DsCep;
 
-    // CONFIRMA TUDO NO BANCO (Neste momento, Pessoa e Endereço são gravados juntos!)
-    FConexao.FDConnection1.Commit;
+      // commit dos dois
+      FConexao.FDConnection1.Commit;
 
-    // 3. Dispara a Thread do ViaCEP
-    TThread.CreateAnonymousThread(
-      procedure
-      var
-        Http: THTTPClient;
-        Response: IHTTPResponse;
-        JsonObj: TJSONObject;
-        QryInt: TFDQuery;
-        ConThread: TdmConexao;
-      begin
-        Http := THTTPClient.Create;
-        ConThread := TdmConexao.Create(nil);
-        QryInt := TFDQuery.Create(nil);
-        try
+      // inicia a thread de CEP
+      TThread.CreateAnonymousThread(
+        procedure
+        var
+          vltHttp: THTTPClient;
+          vltResponse: IHTTPResponse;
+          vltJsonObj: TJSONObject;
+          vltQryInt: TFDQuery;
+          vltConThread: TdmConexao;
+        begin
+          vltHttp := THTTPClient.Create;
+          vltConThread := TdmConexao.Create(nil);
+          vltQryInt := TFDQuery.Create(nil);
           try
-            Response := Http.Get('https://viacep.com.br/ws/' + ThreadCep + '/json/');
-            if Response.StatusCode = 200 then
-            begin
-              JsonObj := TJSONObject.ParseJSONValue(Response.ContentAsString()) as TJSONObject;
-              if Assigned(JsonObj) then
-              try
-                if JsonObj.GetValue('erro') = nil then
-                begin
-                  QryInt.Connection := ConThread.FDConnection1;
-                  QryInt.SQL.Add('INSERT INTO endereco_integracao (idendereco, dsuf, nmcidade, nmbairro, nmlogradouro, dscomplemento)');
-                  QryInt.SQL.Add('VALUES (:id, :uf, :cidade, :bairro, :logradouro, :complemento)');
+            try
+              vltResponse := vltHttp.Get('https://viacep.com.br/ws/' + vlsThreadCep + '/json/');
+              if vltResponse.StatusCode = 200 then
+              begin
+                vltJsonObj := TJSONObject.ParseJSONValue(vltResponse.ContentAsString()) as TJSONObject;
+                if Assigned(vltJsonObj) then
+                try
+                  if vltJsonObj.GetValue('erro') = nil then
+                  begin
+                    vltQryInt.Connection := vltConThread.FDConnection1;
+                    vltQryInt.SQL.Add('INSERT INTO endereco_integracao (idendereco, dsuf, nmcidade, nmbairro, nmlogradouro, dscomplemento)');
+                    vltQryInt.SQL.Add('VALUES (:id, :uf, :cidade, :bairro, :logradouro, :complemento)');
 
-                  QryInt.ParamByName('id').AsLargeInt := ThreadIdEndereco;
-                  QryInt.ParamByName('uf').AsString := JsonObj.GetValue('uf').Value;
-                  QryInt.ParamByName('cidade').AsString := JsonObj.GetValue('localidade').Value;
-                  QryInt.ParamByName('bairro').AsString := JsonObj.GetValue('bairro').Value;
-                  QryInt.ParamByName('logradouro').AsString := JsonObj.GetValue('logradouro').Value;
+                    vltQryInt.ParamByName('id').AsLargeInt := vliThreadIdEndereco;
+                    vltQryInt.ParamByName('uf').AsString := vltJsonObj.GetValue('uf').Value;
+                    vltQryInt.ParamByName('cidade').AsString := vltJsonObj.GetValue('localidade').Value;
+                    vltQryInt.ParamByName('bairro').AsString := vltJsonObj.GetValue('bairro').Value;
+                    vltQryInt.ParamByName('logradouro').AsString := vltJsonObj.GetValue('logradouro').Value;
 
-                  if JsonObj.GetValue('complemento') <> nil then
-                    QryInt.ParamByName('complemento').AsString := JsonObj.GetValue('complemento').Value
-                  else
-                    QryInt.ParamByName('complemento').AsString := '';
+                    if vltJsonObj.GetValue('complemento') <> nil then
+                      vltQryInt.ParamByName('complemento').AsString := vltJsonObj.GetValue('complemento').Value
+                    else
+                      vltQryInt.ParamByName('complemento').AsString := '';
 
-                  QryInt.ExecSQL;
+                    vltQryInt.ExecSQL;
+                  end;
+                finally
+                  vltJsonObj.Free;
                 end;
-              finally
-                JsonObj.Free;
               end;
+            except
             end;
-          except
+          finally
+            vltQryInt.Free;
+            vltConThread.Free;
+            vltHttp.Free;
           end;
-        finally
-          QryInt.Free;
-          ConThread.Free;
-          Http.Free;
-        end;
-      end
-    ).Start;
+        end
+      ).Start;
 
-    Result := True;
+      Result := True;
+    finally
+      vltQry.Free;
+    end;
   except
-    // SE QUALQUER COISA DER ERRO, DESFAZ A PESSOA E O ENDEREÇO (Garante a Integridade!)
-    FConexao.FDConnection1.Rollback;
+    // Se algo deu errado desfaz
+    if FConexao.FDConnection1.InTransaction then
+      FConexao.FDConnection1.Rollback;
     Result := False;
   end;
-  Qry.Free;
 end;
 
 function TPessoaDAO.Update(APessoa: TPessoa): Boolean;
 var
-  Qry: TFDQuery;
+  vltQry: TFDQuery;
 begin
-  Qry := TFDQuery.Create(nil);
+  vltQry := nil;
   try
-    Qry.Connection := FConexao.FDConnection1;
-    Qry.SQL.Add('UPDATE pessoa SET flnatureza = :natureza, dsdocumento = :documento,');
-    Qry.SQL.Add('nmprimeiro = :primeiro, nmsegundo = :segundo, dtregistro = :registro');
-    Qry.SQL.Add('WHERE idpessoa = :id');
+    vltQry := TFDQuery.Create(nil);
+    vltQry.Connection := FConexao.FDConnection1;
+    vltQry.SQL.Add('UPDATE pessoa SET flnatureza = :natureza, dsdocumento = :documento,');
+    vltQry.SQL.Add('nmprimeiro = :primeiro, nmsegundo = :segundo, dtregistro = :registro');
+    vltQry.SQL.Add('WHERE idpessoa = :id');
 
-    Qry.ParamByName('natureza').AsInteger := APessoa.FlNatureza;
-    Qry.ParamByName('documento').AsString := APessoa.DsDocumento;
-    Qry.ParamByName('primeiro').AsString := APessoa.NmPrimeiro;
-    Qry.ParamByName('segundo').AsString := APessoa.NmSegundo;
-    Qry.ParamByName('registro').AsDate := APessoa.DtRegistro;
-    Qry.ParamByName('id').AsLargeInt := APessoa.IdPessoa;
+    vltQry.ParamByName('natureza').AsInteger := APessoa.FlNatureza;
+    vltQry.ParamByName('documento').AsString := APessoa.DsDocumento;
+    vltQry.ParamByName('primeiro').AsString := APessoa.NmPrimeiro;
+    vltQry.ParamByName('segundo').AsString := APessoa.NmSegundo;
+    vltQry.ParamByName('registro').AsDate := APessoa.DtRegistro;
+    vltQry.ParamByName('id').AsLargeInt := APessoa.IdPessoa;
 
-    Qry.ExecSQL;
+    vltQry.ExecSQL;
     Result := True;
   finally
-    Qry.Free;
+    vltQry.Free;
   end;
 end;
 
 function TPessoaDAO.Delete(AIdPessoa: Int64): Boolean;
 var
-  Qry: TFDQuery;
+  vltQry: TFDQuery;
 begin
-  Qry := TFDQuery.Create(nil);
+  vltQry := nil;
   try
-    Qry.Connection := FConexao.FDConnection1;
-    Qry.SQL.Add('DELETE FROM pessoa WHERE idpessoa = :id');
-    Qry.ParamByName('id').AsLargeInt := AIdPessoa;
+    vltQry := TFDQuery.Create(nil);
+    vltQry.Connection := FConexao.FDConnection1;
+    vltQry.SQL.Add('DELETE FROM pessoa WHERE idpessoa = :id');
+    vltQry.ParamByName('id').AsLargeInt := AIdPessoa;
 
-    Qry.ExecSQL;
+    vltQry.ExecSQL;
     Result := True;
   finally
-    Qry.Free;
+    vltQry.Free;
   end;
 end;
 
-function TPessoaDAO.InsertLote(ALista: TObjectList<TPessoa>): Boolean;
+//inicial havia feito o insert em lote utilizando um Array e dando insert com uma unica chamada
+//mas como tem integridade de uma pessoa não poder ficar sem endereço esse metodo nao funcionaria.
+//function TPessoaDAO.InsertLote(ALista: TObjectList<TPessoa>): Boolean;
+//var
+//  vltQry: TFDQuery;
+//  vliI: Integer;
+//begin
+//  Result := False;
+//  if ALista.Count = 0 then Exit;
+//
+//  vltQry := nil;
+//
+//  FConexao.FDConnection1.StartTransaction;
+//  try
+//    vltQry := TFDQuery.Create(nil);
+//    try
+//      vltQry.Connection := FConexao.FDConnection1;
+//      vltQry.SQL.Add('INSERT INTO pessoa (flnatureza, dsdocumento, nmprimeiro, nmsegundo, dtregistro)');
+//      vltQry.SQL.Add('VALUES (:natureza, :documento, :primeiro, :segundo, :registro)');
+//
+//      vltQry.Params.ArraySize := ALista.Count;
+//
+//      // Alimenta os arrays com os dados da lista
+//      for vliI := 0 to ALista.Count - 1 do
+//      begin
+//        vltQry.ParamByName('natureza').AsIntegers[vliI] := ALista[vliI].FlNatureza;
+//        vltQry.ParamByName('documento').AsStrings[vliI] := ALista[vliI].DsDocumento;
+//        vltQry.ParamByName('primeiro').AsStrings[vliI] := ALista[vliI].NmPrimeiro;
+//        vltQry.ParamByName('segundo').AsStrings[vliI] := ALista[vliI].NmSegundo;
+//        vltQry.ParamByName('registro').AsDates[vliI] := ALista[vliI].DtRegistro;
+//      end;
+//
+//      // Executa as inserções em uma única chamada
+//      vltQry.Execute(ALista.Count, 0);
+//
+//      FConexao.FDConnection1.Commit;
+//      Result := True;
+//    finally
+//      vltQry.Free;
+//    end;
+//  except
+//    if FConexao.FDConnection1.InTransaction then
+//      FConexao.FDConnection1.Rollback;
+//    Result := False;
+//  end;
+//end;
+
+function TPessoaDAO.InsertLote(ALista: TObjectList<TPessoa>): Integer;
 var
-  Qry: TFDQuery;
-  I: Integer;
+  vltQryPessoa, vltQryEndereco: TFDQuery;
+  vliI: Integer;
+  vliContadorSucesso: Integer;
 begin
-  Result := False;
-  if ALista.Count = 0 then Exit;
+  Result := 0;
+  vliContadorSucesso := 0;
 
-  Qry := TFDQuery.Create(nil);
+  if (not Assigned(ALista)) or (ALista.Count = 0) then
+    Exit;
+
+  vltQryPessoa := nil;
+  vltQryEndereco := nil;
+
+  FConexao.FDConnection1.StartTransaction;
   try
-    Qry.Connection := FConexao.FDConnection1;
-    Qry.SQL.Add('INSERT INTO pessoa (flnatureza, dsdocumento, nmprimeiro, nmsegundo, dtregistro)');
-    Qry.SQL.Add('VALUES (:natureza, :documento, :primeiro, :segundo, :registro)');
+    vltQryPessoa := TFDQuery.Create(nil);
+    vltQryEndereco := TFDQuery.Create(nil);
 
-    // Configura o Array DML para o tamanho exato da nossa lista (ex: 50.000)
-    Qry.Params.ArraySize := ALista.Count;
+    vltQryPessoa.Connection := FConexao.FDConnection1;
+    vltQryEndereco.Connection := FConexao.FDConnection1;
 
-    // Alimenta os arrays com os dados da lista
-    for I := 0 to ALista.Count - 1 do
+    vltQryPessoa.SQL.Add('INSERT INTO pessoa (flnatureza, dsdocumento, nmprimeiro, nmsegundo, dtregistro)');
+    vltQryPessoa.SQL.Add('VALUES (:natureza, :documento, :primeiro, :segundo, :registro) RETURNING idpessoa');
+
+    vltQryEndereco.SQL.Add('INSERT INTO endereco (idpessoa, dscep) VALUES (:pessoa, :cep)');
+
+    for vliI := 0 to ALista.Count - 1 do
     begin
-      Qry.ParamByName('natureza').AsIntegers[I] := ALista[I].FlNatureza;
-      Qry.ParamByName('documento').AsStrings[I] := ALista[I].DsDocumento;
-      Qry.ParamByName('primeiro').AsStrings[I] := ALista[I].NmPrimeiro;
-      Qry.ParamByName('segundo').AsStrings[I] := ALista[I].NmSegundo;
-      Qry.ParamByName('registro').AsDates[I] := ALista[I].DtRegistro;
+      // se veio sem cep nao insere
+      if ALista[vliI].DsCep.Trim = '' then
+        Continue;
+
+      vltQryPessoa.ParamByName('natureza').AsInteger := ALista[vliI].FlNatureza;
+      vltQryPessoa.ParamByName('documento').AsString := ALista[vliI].DsDocumento;
+      vltQryPessoa.ParamByName('primeiro').AsString := ALista[vliI].NmPrimeiro;
+      vltQryPessoa.ParamByName('segundo').AsString := ALista[vliI].NmSegundo;
+      vltQryPessoa.ParamByName('registro').AsDate := ALista[vliI].DtRegistro;
+      vltQryPessoa.Open;
+
+      ALista[vliI].IdPessoa := vltQryPessoa.FieldByName('idpessoa').AsLargeInt;
+      vltQryPessoa.Close;
+
+      vltQryEndereco.ParamByName('pessoa').AsLargeInt := ALista[vliI].IdPessoa;
+      vltQryEndereco.ParamByName('cep').AsString := ALista[vliI].DsCep;
+      vltQryEndereco.ExecSQL;
+
+      Inc(vliContadorSucesso);
     end;
 
-    // Executa as 50.000 inserções em uma única chamada de rede!
-    Qry.Execute(ALista.Count, 0);
-    Result := True;
-  finally
-    Qry.Free;
+    FConexao.FDConnection1.Commit;
+    Result := vliContadorSucesso;
+
+  except
+    if FConexao.FDConnection1.InTransaction then
+      FConexao.FDConnection1.Rollback;
+    Result := -1;
   end;
+
+  if Assigned(vltQryPessoa) then vltQryPessoa.Free;
+  if Assigned(vltQryEndereco) then vltQryEndereco.Free;
 end;
 
 end.

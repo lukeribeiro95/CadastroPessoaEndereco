@@ -2,7 +2,8 @@ program Client;
 
 uses
   Vcl.Forms,
-  uPrincipal in 'uPrincipal.pas' {Form10};
+  uPrincipal in 'uPrincipal.pas' {Form10},
+  uPessoaService in 'Service\uPessoaService.pas';
 
 {$R *.res}
 

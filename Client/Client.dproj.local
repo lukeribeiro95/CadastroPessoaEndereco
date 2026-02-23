@@ -1,2 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<BorlandProject/>
+<BorlandProject>
+  <Transactions>
+    <Transaction>2026/02/23 01:50:48.100,=C:\TesteDelphi\Lucas Ribeiro\Client\Unit1.pas</Transaction>
+    <Transaction>2026/02/23 01:51:20.329,C:\TesteDelphi\Lucas Ribeiro\Client\Service\uPessoaService.pas=C:\TesteDelphi\Lucas Ribeiro\Client\Unit1.pas</Transaction>
+  </Transactions>
+</BorlandProject>
